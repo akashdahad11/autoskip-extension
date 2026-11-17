@@ -1,0 +1,294 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>AutoSkip test harness</title>
+<style>
+  body { font: 13px/1.4 system-ui, sans-serif; margin: 16px; background: #fff; color: #111; }
+  video { width: 320px; height: 180px; background: #000; display: block; margin-bottom: 8px; }
+  #stage { min-height: 60px; border: 1px dashed #bbb; padding: 8px; margin-bottom: 12px; }
+  #stage button, #stage [role="button"], #stage div[onclick] { margin: 4px; padding: 6px 10px; }
+  table { border-collapse: collapse; }
+  td { padding: 2px 10px 2px 0; }
+  .pass { color: #15803d; } .fail { color: #b91c1c; font-weight: 700; }
+</style>
+<script>
+  // --- Fake extension environment -------------------------------------
+  window.AUTOSKIP_TEST_HOST = 'www.netflix.com';
+  (function () {
+    const storageListeners = [];
+    const runtimeListeners = [];
+    const areas = { sync: {}, local: {} };
+    const area = (name) => ({
+      async get(key) { return key ? { [key]: areas[name][key] } : { ...areas[name] }; },
+      async set(obj) {
+        const changes = {};
+        for (const [k, v] of Object.entries(obj)) {
+          changes[k] = { oldValue: areas[name][k], newValue: v };
+          areas[name][k] = v;
+        }
+        storageListeners.forEach((l) => l(changes, name));
+      }
+    });
+    window.__sent = [];
+    window.chrome = {
+      runtime: {
+        id: 'test',
+        sendMessage(msg) {
+          window.__sent.push(msg);
+          // emulate background relaying the toast to the top frame
+          setTimeout(() => runtimeListeners.forEach((l) => l({ type: 'autoskip:toast', feature: msg.feature }, {})), 0);
+          return Promise.resolve();
+        },
+        onMessage: { addListener: (f) => runtimeListeners.push(f) }
+      },
+      storage: { sync: area('sync'), local: area('local'), onChanged: { addListener: (f) => storageListeners.push(f) } }
+    };
+  })();
+</script>
+<script src="../autoskip/shared.js"></script>
+<script src="../autoskip/content.js"></script>
+</head>
+<body>
+<video id="v"></video>
+<div id="stage"></div>
+<table id="out"></table>
+
+<script>
+(async function () {
+  const T = window.__autoskipTest;
+  const stage = document.getElementById('stage');
+  const video = document.getElementById('v');
+  const vs = { duration: 1500, currentTime: 100 };
+  Object.defineProperty(video, 'duration', { get: () => vs.duration, configurable: true });
+  Object.defineProperty(video, 'currentTime', { get: () => vs.currentTime, set: (x) => { vs.currentTime = x; }, configurable: true });
+  const at = (fraction) => { vs.currentTime = vs.duration * fraction; };
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  const results = [];
+  function mk(html, parent = stage) {
+    const t = document.createElement('div');
+    t.innerHTML = html.trim();
+    const el = t.firstElementChild;
+    parent.appendChild(el);
+    return el;
+  }
+  function track(el) {
+    el.__clicks = 0;
+    el.addEventListener('click', () => { el.__clicks++; });
+    return el;
+  }
+  async function scan() { T.scanNow(); await sleep(0); }
+  async function test(name, host, fn) {
+    T.setHost(host);
+    T.reset();
+    stage.innerHTML = '';
+    vs.duration = 1500; vs.currentTime = 100;
+    await AutoSkip.saveSettings(AutoSkip.DEFAULT_SETTINGS);
+    let pass = false, detail = '';
+    try {
+      const r = await fn();
+      pass = r === true;
+      detail = r === true ? '' : String(r);
+    } catch (e) { detail = 'threw ' + e; }
+    results.push({ name, pass, detail });
+  }
+  const expect = (el, n, label) => el.__clicks === n ? true : `${label || 'element'} clicked ${el.__clicks}x, expected ${n}`;
+  const all = (...checks) => checks.find((c) => c !== true) || true;
+
+  // --- Netflix --------------------------------------------------------
+  await test('Netflix: Skip Intro (data-uia)', 'www.netflix.com', async () => {
+    const b = track(mk('<button data-uia="player-skip-intro">Skip Intro</button>'));
+    await scan();
+    return expect(b, 1);
+  });
+  await test('Netflix: Skip Recap (data-uia)', 'www.netflix.com', async () => {
+    const b = track(mk('<button data-uia="player-skip-recap">Skip Recap</button>'));
+    await scan();
+    return expect(b, 1);
+  });
+  await test('Netflix: control-bar Next (aria only) is NOT clicked, even at 98%', 'www.netflix.com', async () => {
+    const b = track(mk('<button data-uia="control-next" aria-label="Next Episode"><svg width="20" height="20"></svg></button>'));
+    await scan(); at(0.98); await scan();
+    return expect(b, 0);
+  });
+  await test('Netflix: seamless Next Episode button', 'www.netflix.com', async () => {
+    at(0.97);
+    const b = track(mk('<button data-uia="next-episode-seamless-button"><span>Next Episode</span></button>'));
+    await scan();
+    return expect(b, 1);
+  });
+  await test('Netflix: "Are you still watching?" → Continue', 'www.netflix.com', async () => {
+    const box = mk('<div><p>Are you still watching Some Show?</p><button data-uia="interrupt-autoplay-continue">Continue Watching</button><button data-uia="interrupt-autoplay-exit">Back to Browse</button></div>');
+    const [cont, exit] = [...box.querySelectorAll('button')].map(track);
+    await scan();
+    return all(expect(cont, 1, 'Continue'), expect(exit, 0, 'Back to Browse'));
+  });
+
+  // --- Prime Video ----------------------------------------------------
+  await test('Prime: skip element + next-up card (not the hide button)', 'www.primevideo.com', async () => {
+    const skip = track(mk('<button class="atvwebplayersdk-skipelement-button">Skip Intro</button>'));
+    const hide = track(mk('<button class="atvwebplayersdk-nextupcardhide-button">Hide</button>'));
+    const next = track(mk('<div class="atvwebplayersdk-nextupcard-button" role="button">Next episode</div>'));
+    await scan();
+    return all(expect(skip, 1, 'skip'), expect(hide, 0, 'hide'), expect(next, 1, 'next'));
+  });
+  await test('Prime: bare "Skip" only counts as Skip Ad while ad timer shows', 'www.primevideo.com', async () => {
+    const skip = track(mk('<div role="button" class="fu4rd6c">Skip</div>'));
+    await scan();
+    const before = skip.__clicks;
+    const timer = mk('<span class="atvwebplayersdk-ad-timer-text">Ad 0:15</span>');
+    await scan();
+    timer.remove();
+    return before === 0 ? expect(skip, 1, 'skip during ad') : `clicked ${before}x before any ad was showing`;
+  });
+  await test('Amazon shopping page: generic text ignored without Prime player', 'www.amazon.in', async () => {
+    const b = track(mk('<button>Skip Intro</button>'));
+    await scan();
+    return expect(b, 0);
+  });
+  await test('Amazon with Prime player: generic text works', 'www.amazon.in', async () => {
+    mk('<div class="webPlayerSDKContainer"></div>');
+    const b = track(mk('<button>Skip Recap</button>'));
+    await scan();
+    return expect(b, 1);
+  });
+
+  // --- JioHotstar -----------------------------------------------------
+  await test('Hotstar: text split across spans ("Skip" + "Intro")', 'www.hotstar.com', async () => {
+    const d = track(mk('<div class="sc-1x2y3z"><span>Skip</span> <span>Intro</span></div>'));
+    await scan();
+    return expect(d, 1);
+  });
+  await test('Hotstar: "Skip Ad in 5" waits, then "Skip Ad" is clicked', 'www.jiohotstar.com', async () => {
+    const b = track(mk('<button>Skip Ad in 5</button>'));
+    await scan();
+    const before = b.__clicks;
+    b.textContent = 'Skip Ad ›';
+    await scan();
+    return before === 0 ? expect(b, 1) : `clicked during countdown`;
+  });
+  await test('Hotstar: text "Next Episode" ignored mid-episode, clicked near the end', 'www.hotstar.com', async () => {
+    const b = track(mk('<button>Next Episode</button>'));
+    at(0.5); await scan();
+    const mid = b.__clicks;
+    at(0.96); await scan();
+    return mid === 0 ? expect(b, 1) : 'clicked mid-episode';
+  });
+  await test('Hotstar: "Skip forward 10s" control is NOT clicked', 'www.hotstar.com', async () => {
+    const b = track(mk('<button aria-label="Skip forward 10 seconds"><svg width="20" height="20"></svg></button>'));
+    await scan();
+    return expect(b, 0);
+  });
+  await test('Hotstar: Hindi "इंट्रो छोड़ें" (precomposed ड़)', 'www.hotstar.com', async () => {
+    const b = track(mk('<button>इंट्रो छोड़ें</button>'));
+    await scan();
+    return expect(b, 1);
+  });
+
+  // --- ZEE5 -----------------------------------------------------------
+  await test('ZEE5: bare "Skip" inside an ad container', 'www.zee5.com', async () => {
+    const wrap = mk('<div class="ad-container"><div class="controls"><button>Skip</button></div></div>');
+    const b = track(wrap.querySelector('button'));
+    await scan();
+    return expect(b, 1);
+  });
+  await test('ZEE5: bare "Skip" outside ads is NOT clicked', 'www.zee5.com', async () => {
+    const b = track(mk('<div class="header"><button>Skip</button></div>').querySelector('button'));
+    await scan();
+    return expect(b, 0);
+  });
+  await test('ZEE5: IMA skip button class', 'www.zee5.com', async () => {
+    const b = track(mk('<button class="videoAdUiSkipButton"><span>Skip Ad</span></button>'));
+    await scan();
+    return expect(b, 1);
+  });
+
+  // --- SonyLIV --------------------------------------------------------
+  await test('SonyLIV: icon-only button with class "skip-intro-btn"', 'www.sonyliv.com', async () => {
+    const b = track(mk('<button class="skip-intro-btn"><svg width="20" height="20"></svg></button>'));
+    await scan();
+    return expect(b, 1);
+  });
+  await test('SonyLIV: still-watching dialog → Continue (not Exit)', 'www.sonyliv.com', async () => {
+    const box = mk('<div role="dialog"><p>Are you still watching?</p><button>Continue</button><button>Exit</button></div>');
+    const [cont, exit] = [...box.querySelectorAll('button')].map(track);
+    await scan();
+    return all(expect(cont, 1, 'Continue'), expect(exit, 0, 'Exit'));
+  });
+  await test('SonyLIV: "Continue Watching" rail link is NOT clicked', 'www.sonyliv.com', async () => {
+    const a = track(mk('<a href="#cw">Continue Watching</a>'));
+    a.addEventListener('click', (e) => e.preventDefault());
+    await scan();
+    return expect(a, 0);
+  });
+  await test('SonyLIV: "Skip Credits" counts as next episode', 'www.sonyliv.com', async () => {
+    const b = track(mk('<button>Skip Credits</button>'));
+    await scan();
+    return expect(b, 1);
+  });
+
+  // --- General behaviour ----------------------------------------------
+  await test('Hidden (display:none) button is NOT clicked', 'www.netflix.com', async () => {
+    const b = track(mk('<button data-uia="player-skip-intro" style="display:none">Skip Intro</button>'));
+    await scan();
+    return expect(b, 0);
+  });
+  await test('Feature toggle: intro off → not clicked', 'www.hotstar.com', async () => {
+    const s = AutoSkip.mergeSettings(null); s.features.intro = false;
+    await AutoSkip.saveSettings(s);
+    const b = track(mk('<button>Skip Intro</button>'));
+    await scan();
+    return expect(b, 0);
+  });
+  await test('Site toggle: ZEE5 off → not clicked', 'www.zee5.com', async () => {
+    const s = AutoSkip.mergeSettings(null); s.sites.zee5 = false;
+    await AutoSkip.saveSettings(s);
+    const b = track(mk('<button>Skip Intro</button>'));
+    await scan();
+    return expect(b, 0);
+  });
+  await test('Master switch off → not clicked', 'www.netflix.com', async () => {
+    const s = AutoSkip.mergeSettings(null); s.enabled = false;
+    await AutoSkip.saveSettings(s);
+    const b = track(mk('<button data-uia="player-skip-intro">Skip Intro</button>'));
+    await scan();
+    return expect(b, 0);
+  });
+  await test('Same button is not hammered (1 click across 3 scans)', 'www.netflix.com', async () => {
+    const b = track(mk('<button data-uia="player-skip-intro">Skip Intro</button>'));
+    await scan(); await scan(); await scan();
+    return expect(b, 1);
+  });
+  await test('Auto-detect via MutationObserver (no manual scan)', 'www.hotstar.com', async () => {
+    const b = track(mk('<button>Skip Recap</button>'));
+    await sleep(1200);
+    return expect(b, 1);
+  });
+  await test('On-screen notice appears and a stat message is sent', 'www.netflix.com', async () => {
+    window.__sent.length = 0;
+    track(mk('<button data-uia="player-skip-intro">Skip Intro</button>'));
+    await scan(); await sleep(50);
+    const host = document.querySelector('[data-autoskip-toast]');
+    const msg = host && host.shadowRoot.querySelector('.m').textContent;
+    if (!window.__sent.some((m) => m.type === 'autoskip:clicked' && m.feature === 'intro')) return 'no stat message';
+    return msg === 'Skipped intro' ? true : `toast text was ${JSON.stringify(msg)}`;
+  });
+
+  // --- Report ---------------------------------------------------------
+  stage.innerHTML = '';
+  const out = document.getElementById('out');
+  for (const r of results) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td class="${r.pass ? 'pass' : 'fail'}">${r.pass ? 'PASS' : 'FAIL'}</td><td></td><td></td>`;
+    tr.children[1].textContent = r.name;
+    tr.children[2].textContent = r.detail;
+    out.appendChild(tr);
+  }
+  const failed = results.filter((r) => !r.pass).length;
+  document.title = failed ? `FAIL ${failed}/${results.length}` : `PASS ${results.length}/${results.length}`;
+  window.__results = { total: results.length, failed, results };
+})();
+</script>
+</body>
+</html>

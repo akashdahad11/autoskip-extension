@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>AutoSkip popup preview</title>
+<style>
+  body { margin: 0; padding: 24px; background: #888; display: flex; gap: 24px; align-items: flex-start; }
+  iframe { width: 330px; height: 560px; border: 0; border-radius: 10px; box-shadow: 0 8px 30px rgba(0,0,0,.35); }
+</style>
+</head>
+<body>
+<iframe id="f"></iframe>
+<script>
+  // Renders the real popup with a stubbed chrome.* API (pretend the active
+  // tab is Netflix and a few clicks have been counted).
+  const shim = `<script>
+    const areas = { sync: {}, local: { stats: { intro: 37, next: 12, ads: 9, stillWatching: 2 } } };
+    const ls = [];
+    const area = (n) => ({
+      async get(k) { return k ? { [k]: areas[n][k] } : { ...areas[n] }; },
+      async set(o) { const c = {}; for (const [k, v] of Object.entries(o)) { c[k] = { newValue: v }; areas[n][k] = v; } ls.forEach((l) => l(c, n)); }
+    });
+    window.chrome = {
+      storage: { sync: area('sync'), local: area('local'), onChanged: { addListener: (f) => ls.push(f) } },
+      tabs: { query: async () => [{ url: 'https://www.netflix.com/watch/8123' }] }
+    };
+  <\/script>`;
+  fetch('../autoskip/popup/popup.html').then((r) => r.text()).then((html) => {
+    document.getElementById('f').srcdoc = html
+      .replace('<head>', '<head><base href="/autoskip/popup/">' + shim);
+  });
+</script>
+</body>
+</html>

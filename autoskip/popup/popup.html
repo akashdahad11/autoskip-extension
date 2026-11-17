@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>AutoSkip</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <img src="../icons/icon-48.png" alt="" width="32" height="32">
+    <div class="title">
+      <h1>AutoSkip</h1>
+      <p id="status"><span class="dot"></span><span id="statusText">Loading…</span></p>
+    </div>
+    <label class="switch big" title="Turn AutoSkip on or off">
+      <input type="checkbox" id="enabled" aria-label="AutoSkip on/off">
+      <span class="track"></span>
+    </label>
+  </header>
+
+  <main id="body">
+    <section>
+      <h2>Auto-click</h2>
+      <ul id="features" class="card"></ul>
+    </section>
+
+    <section>
+      <h2>Sites</h2>
+      <div id="sites" class="chips"></div>
+    </section>
+
+    <section>
+      <ul class="card">
+        <li class="row">
+          <div class="text">
+            <span class="label">On-screen notice</span>
+            <span class="hint">Brief “Skipped intro” pill on the video</span>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="showToast" aria-label="On-screen notice">
+            <span class="track"></span>
+          </label>
+        </li>
+      </ul>
+    </section>
+  </main>
+
+  <footer>
+    <span id="total">0 skips so far</span>
+    <button id="reset" type="button">Reset count</button>
+  </footer>
+
+  <template id="featureRow">
+    <li class="row">
+      <span class="glyph"></span>
+      <div class="text">
+        <span class="label"></span>
+        <span class="hint"></span>
+      </div>
+      <span class="count" title="Times clicked">0</span>
+      <label class="switch">
+        <input type="checkbox">
+        <span class="track"></span>
+      </label>
+    </li>
+  </template>
+
+  <script src="../shared.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

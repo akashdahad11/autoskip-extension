@@ -1,0 +1,50 @@
+{
+  "manifest_version": 3,
+  "name": "AutoSkip – Skip Intros, Ads & Next Episode",
+  "short_name": "AutoSkip",
+  "version": "1.0.0",
+  "description": "Automatically clicks Skip Intro, Skip Recap, Skip Ad and Next Episode on Netflix, Prime Video, JioHotstar, ZEE5 and SonyLIV.",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "action": {
+    "default_title": "AutoSkip",
+    "default_popup": "popup/popup.html",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png"
+    }
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "permissions": ["storage", "activeTab"],
+  "content_scripts": [
+    {
+      "matches": [
+        "*://*.netflix.com/*",
+        "*://*.primevideo.com/*",
+        "*://*.amazon.com/*",
+        "*://*.amazon.in/*",
+        "*://*.amazon.co.uk/*",
+        "*://*.amazon.de/*",
+        "*://*.amazon.ca/*",
+        "*://*.amazon.com.au/*",
+        "*://*.amazon.co.jp/*",
+        "*://*.hotstar.com/*",
+        "*://*.jiohotstar.com/*",
+        "*://*.zee5.com/*",
+        "*://*.sonyliv.com/*",
+        "*://imasdk.googleapis.com/*"
+      ],
+      "js": ["shared.js", "content.js"],
+      "run_at": "document_idle",
+      "all_frames": true,
+      "match_about_blank": true
+    }
+  ]
+}
